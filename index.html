@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Geocerca Mapbox - Monitoreo en Tiempo Real</title>
+
+    <!-- Mapbox GL JS -->
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+    <link
+      href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css"
+      rel="stylesheet"
+    />
+
+    <!-- Mapbox GL Draw -->
+    <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-draw/v1.4.2/mapbox-gl-draw.js"></script>
+    <link
+      href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-draw/v1.4.2/mapbox-gl-draw.css"
+      rel="stylesheet"
+    />
+
+    <!-- Turf.js para análisis geoespacial -->
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: sans-serif;
+      }
+      #map {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 100%;
+      }
+      #status-bar {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        z-index: 10;
+        background: rgba(0, 0, 0, 0.85);
+        color: white;
+        padding: 12px 18px;
+        border-radius: 8px;
+        font-size: 14px;
+        max-width: 360px;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+        transition: background 0.3s ease;
+      }
+      #controls-panel {
+        position: absolute;
+        bottom: 25px;
+        left: 10px;
+        z-index: 10;
+        background: white;
+        padding: 10px 15px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      }
+      .btn {
+        background: #2a9d8f;
+        color: white;
+        border: none;
+        padding: 8px 14px;
+        border-radius: 5px;
+        cursor: pointer;
+        font-weight: bold;
+      }
+      .btn:hover {
+        background: #218376;
+      }
+      .dog-marker {
+        width: 34px;
+        height: 34px;
+        background-image: url("https://cdn-icons-png.flaticon.com/512/616/616408.png");
+        background-size: cover;
+        border-radius: 50%;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status-bar">Inicializando sistema...</div>
+
+    <div id="controls-panel">
+      <button class="btn" onclick="toggleSimulation()">
+        ⏯️ Iniciar / Pausar Simulación GPS
+      </button>
+    </div>
+
+    <div id="map"></div>
+
+    <script>
+      // Token público de Mapbox
+      mapboxgl.accessToken =
+        "pk.eyJ1IjoiYWxleGV5MTI1IiwiYSI6ImNtbGt4eXVlYTAxeHQzY29kdzR0dHR0MnMifQ.4urbDb7SREWJwybNIVnmOA";
+
+      const statusBar = document.getElementById("status-bar");
+
+      // Inicializar mapa centrado en El Palmar (Puerto Alvarado Edificio 16 / Calle Tulipán)
+      const map = new mapboxgl.Map({
+        container: "map",
+        style: "mapbox://styles/mapbox/streets-v12",
+        center: [-98.76985, 20.10831],
+        zoom: 16,
+      });
+
+      // Herramienta de dibujo
+      const draw = new MapboxDraw({
+        displayControlsDefault: false,
+        controls: { polygon: true, trash: true },
+        defaultMode: "simple_select",
+      });
+      map.addControl(draw);
+
+      let currentGeofenceId = null;
+      let dogMarker = null;
+      let simulationInterval = null;
+      let isSimulating = false;
+
+      // Coordenadas del recorrido de simulación: inicia dentro y avanza hacia afuera
+      const pathCoordinates = [
+        [-98.76985, 20.10831], // Dentro
+        [-98.7692, 20.10831], // Dentro (Calle Tulipán)
+        [-98.7685, 20.10831], // Dentro (Cerca de Calle Noche Buena)
+        [-98.7675, 20.10831], // Saliendo
+        [-98.7665, 20.10831], // Fuera
+        [-98.7655, 20.10831], // Muy Fuera
+      ];
+      let pathIndex = 0;
+
+      // Sonido de alerta
+      function playAlertSound() {
+        try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          const osc = ctx.createOscillator();
+          osc.type = "sawtooth";
+          osc.frequency.setValueAtTime(800, ctx.currentTime);
+          osc.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.3);
+        } catch (e) {}
+      }
+
+      // ----------------------------------------------------------------
+      // EVALUACIÓN GEOESPACIAL DENTRO / FUERA
+      // ----------------------------------------------------------------
+      function checkGeofenceStatus(currentCoords) {
+        const data = draw.getAll();
+
+        if (!data.features || data.features.length === 0) {
+          statusBar.style.background = "rgba(0,0,0,0.85)";
+          statusBar.innerText =
+            "⚠️ Dibuja un polígono para iniciar el monitoreo.";
+          return;
+        }
+
+        const polygon = data.features[0];
+        const point = turf.point(currentCoords);
+
+        // Validar si el punto está dentro del polígono dibujado
+        const isInside = turf.booleanPointInPolygon(point, polygon);
+
+        if (isInside) {
+          statusBar.style.background = "#2a9d8f"; // Verde
+          statusBar.innerText = "🟢 ESTADO: Mascota DENTRO de la zona segura.";
+        } else {
+          statusBar.style.background = "#d90429"; // Rojo
+          statusBar.innerText =
+            "🚨 ¡ALERTA! La mascota ha SALIDO de la geocerca.";
+          playAlertSound();
+        }
+      }
+
+      // Cargar mapa y datos de MongoDB Atlas
+      map.on("load", async () => {
+        // Marcador del perro
+        const el = document.createElement("div");
+        el.className = "dog-marker";
+
+        dogMarker = new mapboxgl.Marker(el)
+          .setLngLat(pathCoordinates[0])
+          .addTo(map);
+
+        statusBar.innerText = "Cargando geocerca desde Atlas...";
+        try {
+          const response = await fetch("http://localhost:3000/api/geofence");
+          if (response.ok) {
+            const feature = await response.json();
+            currentGeofenceId = feature.id;
+            draw.add(feature);
+
+            // Evaluar estado con las coordenadas iniciales del perro
+            checkGeofenceStatus(pathCoordinates[0]);
+          } else {
+            statusBar.innerText =
+              "✏️ No hay geocerca previa. Dibuja un polígono.";
+          }
+        } catch (err) {
+          console.error(err);
+          statusBar.innerText =
+            "❌ Error al conectar con http://localhost:3000";
+        }
+      });
+
+      // ----------------------------------------------------------------
+      // CONTROLLER SIMULACIÓN GPS
+      // ----------------------------------------------------------------
+      function toggleSimulation() {
+        if (isSimulating) {
+          clearInterval(simulationInterval);
+          isSimulating = false;
+          statusBar.innerText = "⏸️ Simulación pausada.";
+        } else {
+          isSimulating = true;
+          simulationInterval = setInterval(() => {
+            pathIndex = (pathIndex + 1) % pathCoordinates.length;
+            const newPos = pathCoordinates[pathIndex];
+
+            dogMarker.setLngLat(newPos);
+            checkGeofenceStatus(newPos);
+          }, 2000);
+        }
+      }
+
+      // Guardar en Atlas y reevaluar estado al dibujar o editar vértices
+      async function syncGeofence() {
+        const data = draw.getAll();
+
+        if (data.features.length > 0) {
+          const polygonFeature = data.features[0];
+
+          const payload = {
+            id: currentGeofenceId,
+            name: "Geocerca El Palmar",
+            geometry: polygonFeature.geometry,
+          };
+
+          try {
+            const res = await fetch("http://localhost:3000/api/geofence/save", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            });
+
+            const result = await res.json();
+
+            if (result.data && result.data._id) {
+              currentGeofenceId = result.data._id;
+            }
+
+            // Reevaluar inmediatamente si el perro está dentro con el nuevo polígono
+            if (dogMarker) {
+              checkGeofenceStatus(dogMarker.getLngLat().toArray());
+            }
+          } catch (err) {
+            console.error(err);
+            statusBar.innerText = "❌ Error al guardar en Atlas";
+          }
+        }
+      }
+
+      map.on("draw.create", syncGeofence);
+      map.on("draw.update", syncGeofence);
+    </script>
+  </body>
+</html>
