@@ -5,16 +5,20 @@ dns.setServers(["8.8.8.8", "1.1.1.1"]);
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Servidor en puerto ${PORT}`));
 
+// 1. Crear la instancia de Express PRIMERO
 const app = express();
+const PORT = process.env.PORT || 3000;
+
+// 2. Configurar Middlewares
 app.use(express.json());
 app.use(cors());
 app.use(express.static(__dirname));
 
-// Conexión a MongoDB Atlas con tus credenciales actualizadas
-const MONGO_URI = process.env.MONGO_URI;
+// Conexión a MongoDB Atlas con la URI dinámica o tu URI por defecto
+const MONGO_URI =
+  process.env.MONGO_URI ||
+  "mongodb+srv://alexmorales2899_db_user:K5m6S1qf@cluster0.oecxux4.mongodb.net/geofenceDB?retryWrites=true&w=majority";
 
 mongoose
   .connect(MONGO_URI)
@@ -88,7 +92,7 @@ app.post("/api/geofence/save", async (req, res) => {
   }
 });
 
-// Iniciar Servidor en el puerto 3000
-app.listen(3000, () =>
-  console.log("🚀 Servidor ejecutándose en http://localhost:3000"),
+// 3. Iniciar Servidor AL FINAL
+app.listen(PORT, () =>
+  console.log(`🚀 Servidor ejecutándose en puerto ${PORT}`),
 );
